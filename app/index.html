@@ -53,6 +53,7 @@ textarea{min-height:70px;resize:vertical}
 .btn.ghost{background:transparent;color:var(--teal-d);border:1.5px solid var(--line)}
 .btn.bad{background:var(--bad)} .btn.ok{background:var(--ok)}
 .btn.big{width:100%;font-size:19px;min-height:60px}
+a.btn{text-decoration:none}
 .btn.sm{padding:7px 12px;min-height:34px;font-size:14px;border-radius:9px}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .sp{flex:1}
@@ -118,6 +119,7 @@ tr.click{cursor:pointer} tr.click:hover{background:var(--teal-l)}
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="config.js"></script>
 <script src="app.js"></script>
+<script src="reparto.js"></script>
 <script>
 if ('serviceWorker' in navigator) { navigator.serviceWorker.register('sw.js').catch(()=>{}); }
 </script>

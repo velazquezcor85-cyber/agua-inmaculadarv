@@ -161,8 +161,8 @@ function renderInactivo() {
 async function salir() { await sb.auth.signOut(); S.turno = null; S.tab = null; location.reload(); }
 
 /* ---------------- estructura general ---------------- */
-const TABS_PLANTA = [['vender','Vender'],['pipa','Pipa'],['compra','Compras y caja'],['bitacora','Bitácora'],['cerrar','Cerrar turno']];
-const TABS_DUENO = [['resumen','Resumen'],['turnos','Turnos'],['ventas','Ventas'],['inventario','Inventario'],['productos','Productos'],
+const TABS_PLANTA = [['vender','Vender'],['pedidos','Pedidos'],['prestamos','Préstamos'],['pipa','Pipa'],['compra','Compras y caja'],['bitacora','Bitácora'],['cerrar','Cerrar turno']];
+const TABS_DUENO = [['resumen','Resumen'],['pedidosD','Pedidos'],['reparto','Reparto'],['prestamosD','Préstamos'],['turnos','Turnos'],['ventas','Ventas'],['inventario','Inventario'],['productos','Productos'],
   ['clientes','Clientes'],['contador','Contador'],['fijos','Gastos fijos'],['mant','Mantenimiento'],['bitacoraD','Bitácora'],
   ['usuarios','Usuarios'],['ajustes','Ajustes'],['planta','Operar planta']];
 
@@ -182,10 +182,7 @@ function shell(tabs, contenido) {
 
 async function render() {
   try {
-    if (S.modo === 'repartidor') {
-      shell(null, `<div class="card"><h2>Módulo de reparto</h2><p>El módulo de reparto en camioneta y moto llega en la Fase 2.</p></div>`);
-      return;
-    }
+    if (S.modo === 'repartidor') return renderReparto();
     if (S.modo === 'planta' || (S.modo === 'dueno' && S.tab === 'planta') || S.tab?.startsWith('p_')) return renderPlanta();
     const main = shell(TABS_DUENO);
     const fn = VISTAS_DUENO[S.tab] || VISTAS_DUENO.resumen;
@@ -309,7 +306,7 @@ const VISTAS_PLANTA = {
       document.getElementById('v-tot').textContent = money(lines.reduce((s, p) => s + precioDe(p) * S.cart[p.id], 0));
       document.querySelectorAll('#pay button').forEach(b => b.classList.toggle('on', b.dataset.p === S.pago));
       const c = S.clientes.find(x => x.id == S.clienteId);
-      document.getElementById('v-cred').innerHTML = c && c.tipo !== 'domicilio'
+      document.getElementById('v-cred').innerHTML = c && (c.tipo === 'empresa' || c.tipo === 'restaurante')
         ? `<label class="chk"><input type="checkbox" id="v-credito" ${S.pago === 'credito' ? 'checked' : ''}> A crédito (se cobra después por transferencia)</label>` : '';
       const vc = document.getElementById('v-credito');
       if (vc) vc.onchange = () => { S.pago = vc.checked ? 'credito' : 'efectivo'; pintar(); };
@@ -1156,4 +1153,4 @@ async function mostrarTicket(ventaId, recienCobrada) {
 
 /* ---------------- inicio ---------------- */
 sb.auth.onAuthStateChange((ev) => { if (ev === 'SIGNED_OUT') { S.session = null; } });
-boot();
+// boot() se llama al final de reparto.js
