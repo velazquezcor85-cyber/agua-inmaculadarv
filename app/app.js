@@ -271,7 +271,7 @@ const VISTAS_PLANTA = {
         <div class="card" style="margin-top:16px">
           <div class="row"><h3 style="margin:0">Ventas de este turno</h3><span class="sp"></span><span class="tag inf">${vivas.length} ventas · ${money(totTurno)}</span></div>
           <div class="tw"><table><thead><tr><th>Hora</th><th>Pago</th><th class="n">Total</th></tr></thead><tbody>
-          ${(ult || []).slice(0, 15).map(v => `<tr><td>${fmtHora(v.fecha)}</td><td>${v.cancelada ? '<span class="tag bad">Cancelada</span>' : esc(v.forma_pago)}</td><td class="n">${money(v.total)}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">Aún no hay ventas</td></tr>'}
+          ${(ult || []).slice(0, 15).map(v => `<tr class="click" data-vid="${v.id}" title="Ver ticket"><td>${fmtHora(v.fecha)}</td><td>${v.cancelada ? '<span class="tag bad">Cancelada</span>' : esc(v.forma_pago)}</td><td class="n">${money(v.total)}</td></tr>`).join('') || '<tr><td colspan="3" class="empty">Aún no hay ventas</td></tr>'}
           </tbody></table></div>
         </div>
       </div>
@@ -287,6 +287,7 @@ const VISTAS_PLANTA = {
         <div id="v-cred" style="margin-top:10px"></div>
         <button class="btn big ok" id="v-cobrar" style="margin-top:14px">Cobrar</button>
         <button class="btn ghost" id="v-limpiar" style="width:100%;margin-top:8px">Limpiar</button>
+        <label class="chk small" style="margin:14px 0 0"><input type="checkbox" id="v-tick"> Imprimir ticket en este dispositivo (impresora Bluetooth con RawBT)</label>
       </div>
     </div>`;
     const precioDe = p => {
@@ -322,13 +323,18 @@ const VISTAS_PLANTA = {
     document.getElementById('v-cobrar').onclick = e => busy(e.currentTarget, async () => {
       const items = Object.entries(S.cart).filter(([, q]) => q > 0).map(([id, q]) => ({ producto_id: Number(id), cantidad: q }));
       if (!items.length) throw new Error('Agrega al menos un producto');
-      const { error } = await sb.rpc('registrar_venta', { p_turno_id: S.turno.id, p_forma_pago: S.pago, p_items: items,
+      const { data: ventaId, error } = await sb.rpc('registrar_venta', { p_turno_id: S.turno.id, p_forma_pago: S.pago, p_items: items,
         p_cliente_id: S.clienteId ? Number(S.clienteId) : null, p_canal: S.clienteId && S.clientes.find(c => c.id == S.clienteId)?.tipo === 'empresa' ? 'empresa' : 'planta' });
       if (error) throw error;
       toast('Venta registrada · ' + document.getElementById('v-tot').textContent, 'ok');
       S.cart = {}; S.clienteId = null; S.pago = 'efectivo';
-      VISTAS_PLANTA.vender(main);
+      await VISTAS_PLANTA.vender(main);
+      mostrarTicket(ventaId, true);
     });
+    const ti = document.getElementById('v-tick');
+    ti.checked = impresionActiva();
+    ti.onchange = () => { try { localStorage.setItem('ai_imprimir', ti.checked ? '1' : '0'); } catch {} };
+    main.querySelectorAll('tr[data-vid]').forEach(tr => tr.onclick = () => mostrarTicket(Number(tr.dataset.vid), false));
     pintar();
   },
 
@@ -1011,6 +1017,79 @@ async function cerrarTurnoAjeno(t, main) {
       const { error } = await sb.rpc('cerrar_turno', { p_turno_id: t.id, p_medidor_fin: nval('cx-m'), p_garrafones_fin: nval('cx-g'), p_efectivo_contado: nval('cx-e'), p_notas: val('cx-n') });
       if (error) throw error; close(); toast('Turno cerrado', 'ok'); VISTAS_DUENO.turnos(main);
     }));
+}
+
+/* =====================================================================
+   TICKET DE VENTA E IMPRESIÓN (ESC/POS vía RawBT en Android)
+   ===================================================================== */
+function impresionActiva() { try { return localStorage.getItem('ai_imprimir') === '1'; } catch { return false; } }
+const sinAcentos = s => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\x20-\x7E]/g, '');
+
+async function datosTicket(ventaId) {
+  const { data: v, error } = await sb.from('ventas').select('*, venta_detalle(cantidad, precio_unitario, importe, producto_id)').eq('id', ventaId).single();
+  if (error) throw error;
+  return v;
+}
+function lineasTicket(v) {
+  const W = cfg('ticket_ancho') || 32;
+  const L = [];
+  const centro = s => { s = sinAcentos(s).slice(0, W); return ' '.repeat(Math.max(0, Math.floor((W - s.length) / 2))) + s; };
+  const dos = (a, b) => { a = sinAcentos(a); b = sinAcentos(b); const esp = W - b.length; return (a.length > esp - 1 ? a.slice(0, esp - 1) : a).padEnd(esp) + b; };
+  const sep = '-'.repeat(W);
+  const prod = id => S.productos.find(p => p.id === id)?.nombre || 'Producto';
+  const cli = S.clientes.find(c => c.id === v.cliente_id);
+  const vendedor = S.perfiles.find(p => p.id === v.usuario_id)?.nombre || (v.usuario_id === S.session.user.id ? S.perfil.nombre : '');
+  L.push({ t: centro('AGUA INMACULADA'), b: true, big: true });
+  L.push({ t: centro('Real del Valle') });
+  L.push({ t: sep });
+  L.push({ t: dos('Ticket #' + v.id, new Date(v.fecha).toLocaleDateString('es-MX', { timeZone: CFG.ZONA })) });
+  L.push({ t: dos('Hora: ' + fmtHora(v.fecha), vendedor ? 'Atendio: ' + vendedor : '') });
+  if (cli) L.push({ t: 'Cliente: ' + sinAcentos(cli.nombre).slice(0, W - 9) });
+  L.push({ t: sep });
+  for (const d of v.venta_detalle) {
+    L.push({ t: sinAcentos(prod(d.producto_id)).slice(0, W) });
+    L.push({ t: dos(`  ${fmtN(d.cantidad)} x ${money(d.precio_unitario)}`, money(d.importe)) });
+  }
+  L.push({ t: sep });
+  L.push({ t: dos('TOTAL', money(v.total)), b: true, big: true });
+  L.push({ t: dos('Pago:', { efectivo: 'Efectivo', transferencia: 'Transferencia', credito: 'Credito' }[v.forma_pago]) });
+  if (v.cancelada) L.push({ t: centro('*** VENTA CANCELADA ***'), b: true });
+  L.push({ t: sep });
+  L.push({ t: centro('Gracias por su compra') });
+  L.push({ t: centro('Este ticket no es factura') });
+  return L;
+}
+function escpos(L, abrirCajon) {
+  const B = [0x1B, 0x40]; // inicializar
+  const txt = s => { for (const ch of s) B.push(ch.charCodeAt(0) & 0x7F); };
+  for (const l of L) {
+    B.push(0x1B, 0x45, l.b ? 1 : 0);          // negritas
+    B.push(0x1D, 0x21, l.big ? 0x01 : 0x00);  // doble alto
+    txt(l.t); B.push(0x0A);
+  }
+  B.push(0x1D, 0x21, 0x00, 0x1B, 0x45, 0x00, 0x0A, 0x0A, 0x0A);
+  B.push(0x1D, 0x56, 0x42, 0x00);             // corte de papel (si la impresora lo tiene)
+  if (abrirCajon) B.push(0x1B, 0x70, 0x00, 0x19, 0xFA); // abrir cajón (pin 2)
+  return new Uint8Array(B);
+}
+function enviarImpresora(bytes) {
+  let bin = ''; bytes.forEach(b => bin += String.fromCharCode(b));
+  const b64 = btoa(bin);
+  window.location.href = `intent:base64,${b64}#Intent;scheme=rawbt;package=ru.a402d.rawbtprinter;end;`;
+}
+async function mostrarTicket(ventaId, recienCobrada) {
+  try {
+    const v = await datosTicket(ventaId);
+    const L = lineasTicket(v);
+    const abrir = recienCobrada && v.forma_pago === 'efectivo';
+    if (recienCobrada && impresionActiva()) { enviarImpresora(escpos(L, abrir)); return; }
+    modal(`<h2>Ticket #${v.id}</h2>
+      <pre style="background:#fff;border:1px dashed var(--line);border-radius:10px;padding:14px;font:14px/1.45 ui-monospace,Menlo,Consolas,monospace;overflow-x:auto;max-width:360px;margin:0 auto">${L.map(l => l.b ? `<b${l.big ? ' style="font-size:16px"' : ''}>${esc(l.t)}</b>` : esc(l.t)).join('\n')}</pre>
+      <div class="row" style="margin-top:14px"><button class="btn ghost" data-close>Cerrar</button><span class="sp"></span>
+        <button class="btn" id="tk-p">${recienCobrada ? 'Imprimir' : 'Reimprimir'}</button></div>
+      <p class="mut small">Para imprimir, la tableta Android necesita la app gratuita RawBT vinculada a la impresora Bluetooth. ${recienCobrada && v.forma_pago === 'efectivo' ? 'Al imprimir se abre el cajón.' : 'La reimpresión no abre el cajón.'}</p>`,
+      (box, close) => box.querySelector('#tk-p').onclick = () => { enviarImpresora(escpos(L, abrir)); close(); });
+  } catch (e) { toast(errMsg(e), 'bad'); }
 }
 
 /* ---------------- inicio ---------------- */
