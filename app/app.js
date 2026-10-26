@@ -1039,8 +1039,7 @@ function lineasTicket(v) {
   const prod = id => S.productos.find(p => p.id === id)?.nombre || 'Producto';
   const cli = S.clientes.find(c => c.id === v.cliente_id);
   const vendedor = S.perfiles.find(p => p.id === v.usuario_id)?.nombre || (v.usuario_id === S.session.user.id ? S.perfil.nombre : '');
-  L.push({ t: centro('AGUA INMACULADA'), b: true, big: true });
-  L.push({ t: centro('Real del Valle') });
+  L.push({ t: centro('Real del Valle'), b: true });
   L.push({ t: sep });
   L.push({ t: dos('Ticket #' + v.id, new Date(v.fecha).toLocaleDateString('es-MX', { timeZone: CFG.ZONA })) });
   L.push({ t: dos('Hora: ' + fmtHora(v.fecha), vendedor ? 'Atendio: ' + vendedor : '') });
@@ -1059,8 +1058,32 @@ function lineasTicket(v) {
   L.push({ t: centro('Este ticket no es factura') });
   return L;
 }
-function escpos(L, abrirCajon) {
+let _logoRaster = null;
+async function logoRaster() {
+  if (_logoRaster) return _logoRaster;
+  const ancho = (cfg('ticket_ancho') || 32) >= 48 ? 576 : 384; // puntos de la impresora
+  const w = Math.round(ancho * 0.8 / 8) * 8;                     // logo al 80% del ancho
+  const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = 'logo.jpg'; });
+  const h = Math.round(img.height * w / img.width);
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); g.drawImage(img, 0, 0, w, h);
+  const px = g.getImageData(0, 0, w, h).data, bw = w / 8;
+  const out = [0x1B, 0x61, 0x01, 0x1D, 0x76, 0x30, 0x00, bw & 0xFF, bw >> 8, h & 0xFF, h >> 8];
+  for (let y = 0; y < h; y++) for (let xb = 0; xb < bw; xb++) {
+    let byte = 0;
+    for (let bit = 0; bit < 8; bit++) {
+      const i = (y * w + xb * 8 + bit) * 4;
+      const lum = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+      if (lum < 170) byte |= 0x80 >> bit;
+    }
+    out.push(byte);
+  }
+  out.push(0x0A, 0x1B, 0x61, 0x00);
+  return (_logoRaster = out);
+}
+function escpos(L, abrirCajon, logo) {
   const B = [0x1B, 0x40]; // inicializar
+  if (logo) B.push(...logo);
   const txt = s => { for (const ch of s) B.push(ch.charCodeAt(0) & 0x7F); };
   for (const l of L) {
     B.push(0x1B, 0x45, l.b ? 1 : 0);          // negritas
@@ -1082,13 +1105,14 @@ async function mostrarTicket(ventaId, recienCobrada) {
     const v = await datosTicket(ventaId);
     const L = lineasTicket(v);
     const abrir = recienCobrada && v.forma_pago === 'efectivo';
-    if (recienCobrada && impresionActiva()) { enviarImpresora(escpos(L, abrir)); return; }
+    const logo = await logoRaster().catch(() => null);
+    if (recienCobrada && impresionActiva()) { enviarImpresora(escpos(L, abrir, logo)); return; }
     modal(`<h2>Ticket #${v.id}</h2>
-      <pre style="background:#fff;border:1px dashed var(--line);border-radius:10px;padding:14px;font:14px/1.45 ui-monospace,Menlo,Consolas,monospace;overflow-x:auto;max-width:360px;margin:0 auto">${L.map(l => l.b ? `<b${l.big ? ' style="font-size:16px"' : ''}>${esc(l.t)}</b>` : esc(l.t)).join('\n')}</pre>
+      <pre style="background:#fff;border:1px dashed var(--line);border-radius:10px;padding:14px;font:14px/1.45 ui-monospace,Menlo,Consolas,monospace;overflow-x:auto;max-width:360px;margin:0 auto"><img src="logo.jpg" alt="Agua Inmaculada" style="display:block;width:80%;margin:0 auto 6px;filter:grayscale(1) contrast(1.4)">${L.map(l => l.b ? `<b${l.big ? ' style="font-size:16px"' : ''}>${esc(l.t)}</b>` : esc(l.t)).join('\n')}</pre>
       <div class="row" style="margin-top:14px"><button class="btn ghost" data-close>Cerrar</button><span class="sp"></span>
         <button class="btn" id="tk-p">${recienCobrada ? 'Imprimir' : 'Reimprimir'}</button></div>
       <p class="mut small">Para imprimir, la tableta Android necesita la app gratuita RawBT vinculada a la impresora Bluetooth. ${recienCobrada && v.forma_pago === 'efectivo' ? 'Al imprimir se abre el cajón.' : 'La reimpresión no abre el cajón.'}</p>`,
-      (box, close) => box.querySelector('#tk-p').onclick = () => { enviarImpresora(escpos(L, abrir)); close(); });
+      (box, close) => box.querySelector('#tk-p').onclick = () => { enviarImpresora(escpos(L, abrir, logo)); close(); });
   } catch (e) { toast(errMsg(e), 'bad'); }
 }
 
