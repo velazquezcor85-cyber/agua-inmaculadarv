@@ -1,0 +1,12 @@
+{
+  "name": "Agua Inmaculada · Control",
+  "short_name": "Agua Inmaculada",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#F4F8FA",
+  "theme_color": "#0B6E8A",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
