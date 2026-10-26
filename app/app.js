@@ -701,7 +701,7 @@ const VISTAS_DUENO = {
   /* ---------- PRODUCTOS Y PRECIOS ---------- */
   async productos(main) {
     await cargarCatalogos();
-    main.innerHTML = `<div class="card"><h2>Productos y precios</h2>
+    main.innerHTML = `<div class="card"><div class="row"><h2 style="margin:0">Productos y precios</h2><span class="sp"></span><button class="btn sm" id="pr-nuevo">Nuevo producto</button></div>
       <p class="mut small">El costo estimado suma insumos + agua de pipa (incluye rechazo) + costo extra. Si el margen queda abajo de 20%, se marca en rojo.</p>
       <div class="tw"><table><thead><tr><th>Producto</th><th class="n">Precio planta</th><th class="n">Precio domicilio</th><th class="n">Litros (medidor / pipa)</th><th class="n">Costo extra</th><th class="n">Costo est.</th><th class="n">Margen planta</th><th>Activo</th></tr></thead><tbody>
       ${S.productos.map(p => { const c = costoProducto(p), m = num(p.precio) ? (num(p.precio) - c) / num(p.precio) : 0; return `<tr data-p="${p.id}">
@@ -731,6 +731,7 @@ const VISTAS_DUENO = {
       }
       toast('Precios guardados', 'ok'); VISTAS_DUENO.productos(main);
     });
+    document.getElementById('pr-nuevo').onclick = () => nuevoProducto(() => VISTAS_DUENO.productos(main));
   },
 
   /* ---------- CLIENTES ---------- */
@@ -928,6 +929,43 @@ const VISTAS_DUENO = {
 };
 
 /* ---------------- formularios del dueño ---------------- */
+function nuevoProducto(onSave) {
+  const arts = S.articulos.filter(a => a.tipo !== 'equipo' && a.activo);
+  const colores = ['#1BA6C9', '#E85A9B', '#2E7D5B', '#5C6BC0', '#F2994A', '#8E6CC8', '#0B6E8A'];
+  modal(`<h2>Nuevo producto</h2>
+    <div class="field"><label>Nombre</label><input type="text" id="np-n" placeholder="ej. Botella 1 litro"></div>
+    <div class="grid g2">
+      <div class="field"><label>Precio en planta</label><input type="number" id="np-p" inputmode="decimal"></div>
+      <div class="field"><label>Precio a domicilio</label><input type="number" id="np-pd" inputmode="decimal"></div>
+      <div class="field"><label>Litros que marca el medidor</label><input type="number" id="np-lp" value="0"></div>
+      <div class="field"><label>Litros de pipa (con rechazo)</label><input type="number" id="np-lc" value="0"></div>
+      <div class="field"><label>IVA</label><select id="np-iva"><option value="0">Tasa 0% (agua en garrafón)</option><option value="0.16">16% (hielo, envases chicos, otros)</option></select></div>
+      <div class="field"><label>Costo extra por pieza</label><input type="number" id="np-ce" value="0"></div>
+    </div>
+    <label class="chk"><input type="checkbox" id="np-g"> Cuenta como garrafón (para la meta y el conteo)</label>
+    <div class="field"><label>Color del botón</label><div class="row">${colores.map((c, i) => `<label style="margin:0;cursor:pointer"><input type="radio" name="np-col" value="${c}" ${i === 0 ? 'checked' : ''} style="display:none"><span style="display:inline-block;width:38px;height:38px;border-radius:10px;background:${c};border:3px solid #fff;box-shadow:0 0 0 2px var(--line)"></span></label>`).join('')}</div></div>
+    <div class="field"><label>Qué descuenta del inventario al venderse (por pieza)</label>
+      ${arts.map(a => `<div class="row" style="margin-bottom:6px"><span class="sp">${esc(a.nombre)}</span><input type="number" class="np-ins" data-a="${a.id}" placeholder="0" style="width:90px;padding:7px"></div>`).join('')}
+      <span class="mut small">Ejemplo: un garrafón lleva 1 tapa, 1 liner y 1 sello. Deja en blanco lo que no usa.</span></div>
+    <div class="row"><button class="btn ghost" data-close>Cancelar</button><span class="sp"></span><button class="btn" id="np-b">Guardar producto</button></div>`,
+    (box, close) => {
+      box.querySelectorAll('input[name=np-col]').forEach(r => r.onchange = () => box.querySelectorAll('input[name=np-col] + span').forEach(sp => sp.style.boxShadow = sp.previousElementSibling.checked ? '0 0 0 3px var(--txt)' : '0 0 0 2px var(--line)'));
+      box.querySelector('#np-b').onclick = e => busy(e.currentTarget, async () => {
+        if (!val('np-n')) throw new Error('Escribe el nombre');
+        const precio = nval('np-p'); if (precio === null || precio <= 0) throw new Error('Escribe el precio');
+        const ins = [...box.querySelectorAll('.np-ins')].filter(i => num(i.value) > 0).map(i => ({ articulo_id: Number(i.dataset.a), cantidad: num(i.value) }));
+        const row = { nombre: val('np-n'), precio, precio_domicilio: nval('np-pd'), litros_producto: nval('np-lp') ?? 0, litros_consumo: nval('np-lc') ?? 0,
+          iva_tasa: Number(val('np-iva')), costo_extra: nval('np-ce') ?? 0, cuenta_garrafon: chk('np-g'),
+          color: box.querySelector('input[name=np-col]:checked').value, orden: Math.max(0, ...S.productos.map(p => p.orden)) + 1, activo: true };
+        const costo = ins.reduce((s, x) => s + x.cantidad * num(S.articulos.find(a => a.id === x.articulo_id)?.costo_unitario), 0) + row.litros_consumo * costoLitro() + row.costo_extra;
+        if (precio < costo && !(await confirmar(`El precio queda abajo del costo estimado (${money(costo)}). ¿Guardar de todos modos?`, 'Guardar'))) return;
+        const { data, error } = await sb.from('productos').insert(row).select('id').single();
+        if (error) throw error;
+        if (ins.length) { const { error: e2 } = await sb.from('producto_insumos').insert(ins.map(x => ({ ...x, producto_id: data.id }))); if (e2) throw e2; }
+        close(); toast('Producto agregado', 'ok'); await cargarCatalogos(); onSave();
+      });
+    });
+}
 function editarArticulo(a, onSave, tipoDef) {
   const nuevo = !a; a = a || { tipo: tipoDef, unidad: 'pieza', minimo: 0, costo_unitario: 0, activo: true };
   const eq = a.tipo === 'equipo';
