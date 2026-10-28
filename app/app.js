@@ -700,7 +700,7 @@ const VISTAS_DUENO = {
     await cargarCatalogos();
     main.innerHTML = `<div class="card"><div class="row"><h2 style="margin:0">Productos y precios</h2><span class="sp"></span><button class="btn sm" id="pr-nuevo">Nuevo producto</button></div>
       <p class="mut small">El costo estimado suma insumos + agua de pipa (incluye rechazo) + costo extra. Si el margen queda abajo de 20%, se marca en rojo.</p>
-      <div class="tw"><table><thead><tr><th>Producto</th><th class="n">Precio planta</th><th class="n">Precio domicilio</th><th class="n">Litros (medidor / pipa)</th><th class="n">Costo extra</th><th class="n">Costo est.</th><th class="n">Margen planta</th><th>Activo</th></tr></thead><tbody>
+      <div class="tw"><table><thead><tr><th>Producto</th><th class="n">Precio planta</th><th class="n">Precio domicilio</th><th class="n">Litros (medidor / pipa)</th><th class="n">Costo extra</th><th class="n">Costo est.</th><th class="n">Margen planta</th><th>Activo</th><th></th></tr></thead><tbody>
       ${S.productos.map(p => { const c = costoProducto(p), m = num(p.precio) ? (num(p.precio) - c) / num(p.precio) : 0; return `<tr data-p="${p.id}">
         <td><b>${esc(p.nombre)}</b><br><span class="mut small">IVA ${pct(p.iva_tasa)}</span></td>
         <td class="n"><input type="number" class="pp" value="${p.precio}" style="width:90px;padding:7px"></td>
@@ -708,7 +708,8 @@ const VISTAS_DUENO = {
         <td class="n"><input type="number" class="lp" value="${p.litros_producto}" style="width:64px;padding:7px"> / <input type="number" class="lc" value="${p.litros_consumo}" style="width:64px;padding:7px"></td>
         <td class="n"><input type="number" class="ce" value="${p.costo_extra}" style="width:80px;padding:7px"></td>
         <td class="n">${money(c)}</td><td class="n"><span class="tag ${m >= 0.2 ? 'ok' : 'bad'}">${pct(m)}</span></td>
-        <td><input type="checkbox" class="ac" ${p.activo ? 'checked' : ''} style="width:22px;height:22px"></td></tr>`; }).join('')}
+        <td><input type="checkbox" class="ac" ${p.activo ? 'checked' : ''} style="width:22px;height:22px"></td>
+        <td><button class="btn sm ghost pr-del" data-id="${p.id}" title="Eliminar producto">Eliminar</button></td></tr>`; }).join('')}
       </tbody></table></div>
       <div class="row" style="margin-top:12px"><span class="sp"></span><button class="btn" id="pr-b">Guardar cambios</button></div></div>`;
     document.getElementById('pr-b').onclick = e => busy(e.currentTarget, async () => {
@@ -729,6 +730,16 @@ const VISTAS_DUENO = {
       toast('Precios guardados', 'ok'); VISTAS_DUENO.productos(main);
     });
     document.getElementById('pr-nuevo').onclick = () => nuevoProducto(() => VISTAS_DUENO.productos(main));
+    main.querySelectorAll('.pr-del').forEach(b => b.onclick = e => busy(e.currentTarget, async () => {
+      const p = S.productos.find(x => x.id === Number(b.dataset.id));
+      if (!(await confirmar(`¿Eliminar <b>${esc(p.nombre)}</b>? Esto no se puede deshacer.`, 'Eliminar'))) return;
+      const { error } = await sb.from('productos').delete().eq('id', p.id);
+      if (error) {
+        if (error.code === '23503') throw new Error('Este producto ya tiene ventas o pedidos registrados. No se puede eliminar: desmarca "Activo" para ocultarlo.');
+        throw error;
+      }
+      toast('Producto eliminado', 'ok'); await cargarCatalogos(); VISTAS_DUENO.productos(main);
+    }));
   },
 
   /* ---------- CLIENTES ---------- */
