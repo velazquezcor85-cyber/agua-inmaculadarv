@@ -273,6 +273,7 @@ const VISTAS_PLANTA = {
         </div>
       </div>
       <div class="card" style="position:sticky;top:120px;align-self:start">
+        <div id="v-cambio-ult"></div>
         <h2>Venta actual</h2>
         <div class="field"><label>Cliente (solo si tiene precio especial o es a crédito)</label>
           <select id="v-cli"><option value="">Público en general</option>${clientesEsp.map(c => `<option value="${c.id}" ${S.clienteId == c.id ? 'selected' : ''}>${esc(c.nombre)}${c.precio_especial ? ' · ' + money(c.precio_especial) : ''}</option>`).join('')}</select></div>
@@ -281,6 +282,7 @@ const VISTAS_PLANTA = {
         <div class="pay" id="pay">
           <button data-p="efectivo">Efectivo</button><button data-p="transferencia">Transferencia</button>
         </div>
+        <div id="v-efe" style="margin-top:10px"></div>
         <div id="v-cred" style="margin-top:10px"></div>
         <button class="btn big ok" id="v-cobrar" style="margin-top:14px">Cobrar</button>
         <button class="btn ghost" id="v-limpiar" style="width:100%;margin-top:8px">Limpiar</button>
@@ -303,28 +305,51 @@ const VISTAS_PLANTA = {
         <div class="cart-line"><span class="n">${esc(p.nombre)}<br><span class="mut small">${money(precioDe(p))} c/u</span></span>
         <button class="qb" data-m="${p.id}">−</button><b style="min-width:28px;text-align:center">${S.cart[p.id]}</b><button class="qb" data-a="${p.id}">+</button></div>`).join('')
         : '<div class="empty">Toca un producto para agregarlo</div>';
-      document.getElementById('v-tot').textContent = money(lines.reduce((s, p) => s + precioDe(p) * S.cart[p.id], 0));
+      const total = lines.reduce((s, p) => s + precioDe(p) * S.cart[p.id], 0);
+      document.getElementById('v-tot').textContent = money(total);
+      const efe = document.getElementById('v-efe');
+      if (S.pago === 'efectivo' && total > 0) {
+        efe.innerHTML = `<label class="small" style="font-weight:700">Paga con</label>
+          <div class="row" style="flex-wrap:wrap;gap:6px;margin:6px 0">${[['Exacto', total], ...[20, 50, 100, 200, 500].filter(b => b >= total).map(b => ['$' + b, b])].map(([t, v]) => `<button class="btn sm sec v-bill" data-v="${v}">${t}</button>`).join('')}</div>
+          <input type="number" id="v-paga" inputmode="decimal" placeholder="Otro monto" value="${S.pagaCon ?? ''}" style="width:100%">
+          <div id="v-camb" style="margin-top:8px;font-size:20px;font-weight:800"></div>`;
+        const camb = () => {
+          const pc = S.pagaCon, el = document.getElementById('v-camb');
+          if (pc == null || pc === '') { el.innerHTML = ''; return; }
+          const d = num(pc) - total;
+          el.innerHTML = d >= 0 ? `<span style="color:var(--ok,#2E7D5B)">Cambio: ${money(d)}</span>` : `<span style="color:var(--bad,#C62828)">Faltan: ${money(-d)}</span>`;
+        };
+        efe.querySelectorAll('.v-bill').forEach(b => b.onclick = () => { S.pagaCon = Number(b.dataset.v); document.getElementById('v-paga').value = S.pagaCon; camb(); });
+        document.getElementById('v-paga').oninput = e => { S.pagaCon = e.target.value === '' ? null : num(e.target.value); camb(); };
+        camb();
+      } else efe.innerHTML = '';
+      const uc = document.getElementById('v-cambio-ult');
+      uc.innerHTML = S.ultimoCambio != null && !lines.length ? `<div class="alert inf" style="margin-bottom:12px;font-size:18px">Última venta · Pagó con ${money(S.ultimoCambio.paga)} · <b>Cambio ${money(S.ultimoCambio.cambio)}</b></div>` : '';
       document.querySelectorAll('#pay button').forEach(b => b.classList.toggle('on', b.dataset.p === S.pago));
       const c = S.clientes.find(x => x.id == S.clienteId);
       document.getElementById('v-cred').innerHTML = c && (c.tipo === 'empresa' || c.tipo === 'restaurante')
         ? `<label class="chk"><input type="checkbox" id="v-credito" ${S.pago === 'credito' ? 'checked' : ''}> A crédito (se cobra después por transferencia)</label>` : '';
       const vc = document.getElementById('v-credito');
       if (vc) vc.onchange = () => { S.pago = vc.checked ? 'credito' : 'efectivo'; pintar(); };
-      document.querySelectorAll('.prod').forEach(b => b.onclick = () => { S.cart[b.dataset.id] = (S.cart[b.dataset.id] || 0) + 1; pintar(); });
+      document.querySelectorAll('.prod').forEach(b => b.onclick = () => { S.ultimoCambio = null; S.cart[b.dataset.id] = (S.cart[b.dataset.id] || 0) + 1; pintar(); });
       document.querySelectorAll('[data-a]').forEach(b => b.onclick = () => { S.cart[b.dataset.a]++; pintar(); });
       document.querySelectorAll('[data-m]').forEach(b => b.onclick = () => { if (--S.cart[b.dataset.m] <= 0) delete S.cart[b.dataset.m]; pintar(); });
     };
     document.querySelectorAll('#pay button').forEach(b => b.onclick = () => { S.pago = b.dataset.p; pintar(); });
     document.getElementById('v-cli').onchange = e => { S.clienteId = e.target.value || null; if (!S.clienteId && S.pago === 'credito') S.pago = 'efectivo'; pintar(); };
-    document.getElementById('v-limpiar').onclick = () => { S.cart = {}; S.clienteId = null; S.pago = 'efectivo'; VISTAS_PLANTA.vender(main); };
+    document.getElementById('v-limpiar').onclick = () => { S.cart = {}; S.clienteId = null; S.pago = 'efectivo'; S.pagaCon = null; S.ultimoCambio = null; VISTAS_PLANTA.vender(main); };
     document.getElementById('v-cobrar').onclick = e => busy(e.currentTarget, async () => {
       const items = Object.entries(S.cart).filter(([, q]) => q > 0).map(([id, q]) => ({ producto_id: Number(id), cantidad: q }));
       if (!items.length) throw new Error('Agrega al menos un producto');
+      const totalV = prods.filter(p => S.cart[p.id]).reduce((s, p) => s + precioDe(p) * S.cart[p.id], 0);
+      const pagaCon = S.pago === 'efectivo' && S.pagaCon != null ? num(S.pagaCon) : null;
+      if (pagaCon != null && pagaCon < totalV) throw new Error('Con lo que paga no alcanza: faltan ' + money(totalV - pagaCon));
       const { data: ventaId, error } = await sb.rpc('registrar_venta', { p_turno_id: S.turno.id, p_forma_pago: S.pago, p_items: items,
         p_cliente_id: S.clienteId ? Number(S.clienteId) : null, p_canal: S.clienteId && S.clientes.find(c => c.id == S.clienteId)?.tipo === 'empresa' ? 'empresa' : 'planta' });
       if (error) throw error;
       toast('Venta registrada · ' + document.getElementById('v-tot').textContent, 'ok');
-      S.cart = {}; S.clienteId = null; S.pago = 'efectivo';
+      S.cart = {}; S.clienteId = null; S.pago = 'efectivo'; S.pagaCon = null;
+      S.ultimoCambio = pagaCon != null ? { paga: pagaCon, cambio: pagaCon - totalV } : null;
       await VISTAS_PLANTA.vender(main);
       mostrarTicket(ventaId, true);
     });
